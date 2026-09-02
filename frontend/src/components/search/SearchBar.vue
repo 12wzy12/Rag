@@ -2,15 +2,17 @@
 import { ref } from 'vue'
 
 import { useSearchStore } from '@/stores/search'
+import { useKbStore } from '@/stores/kb'
 
-const store = useSearchStore()
+const searchStore = useSearchStore()
+const kbStore = useKbStore()
 
 const draft = ref('')
 
 function submit() {
   const keyword = draft.value.trim()
-  if (!keyword || store.loading) return
-  store.run(keyword)
+  if (!keyword || searchStore.loading || kbStore.currentKbId == null) return
+  searchStore.run(kbStore.currentKbId, keyword)
 }
 </script>
 
@@ -25,15 +27,15 @@ function submit() {
     />
     <div class="topk">
       <label for="topk">Top K</label>
-      <select id="topk" v-model.number="store.topK" :disabled="store.loading">
+      <select id="topk" v-model.number="searchStore.topK" :disabled="searchStore.loading">
         <option :value="3">3</option>
         <option :value="5">5</option>
         <option :value="8">8</option>
         <option :value="10">10</option>
       </select>
     </div>
-    <button class="btn primary" type="submit" :disabled="store.loading">
-      {{ store.loading ? '检索中…' : '检索' }}
+    <button class="btn primary" type="submit" :disabled="searchStore.loading || kbStore.currentKbId == null">
+      {{ searchStore.loading ? '检索中…' : '检索' }}
     </button>
   </form>
 </template>

@@ -1,60 +1,105 @@
-/** Shared types for the RAG backend API. */
+/** 与后端 REST / SSE 契约一一对应的类型定义。 */
 
-/** 文档在知识库中的生命周期状态。 */
-export type DocStatus = 'uploading' | 'processing' | 'ready' | 'error'
+/** 文档生命周期状态（与后端 Document.Status 一致）。 */
+export type DocStatus = 'pending' | 'parsing' | 'ready' | 'failed'
+
+export interface KnowledgeBase {
+  id: number
+  name: string
+  description: string
+  document_count: number
+  chunk_count: number
+  created_at: string
+}
 
 export interface DocumentItem {
-  /** 文档唯一标识。 */
-  id: string
-  /** 原文件名。 */
-  name: string
-  /** MIME 类型，如 application/pdf。 */
-  contentType: string
-  /** 原始文件字节数。 */
+  id: number
+  /** 所属知识库 id。 */
+  kb: number
+  /** 所属知识库名称。 */
+  knowledge_base: string
+  title: string
+  file_name: string
+  content_type: string
   size: number
-  /** 已切分并索引的文本块数量。 */
-  chunks: number
-  /** 当前状态。 */
   status: DocStatus
-  /** 上传时间（ISO 时间戳）。 */
-  uploadedAt: string
-  /** 处理失败时的错误信息。 */
-  error?: string
+  error: string
+  chunk_count: number
+  created_at: string
+  updated_at: string
 }
 
-/** 检索命中的一段文本块。 */
+export interface DocumentUploadResult {
+  message: string
+  chunk_count: number
+  document: DocumentItem
+}
+
+/** 检索命中的一段文本块（含向量分与重排分）。 */
 export interface SearchChunk {
-  /** 所属文档 ID。 */
-  documentId: string
-  /** 所属文档名。 */
-  documentName: string
-  /** 文本块 ID。 */
-  chunkId: string
-  /** 文本块内容。 */
-  text: string
-  /** 相似度得分，0~1，越大越相关。 */
   score: number
-  /** 来源页码（可选）。 */
-  page?: number
+  rerank_score: number
+  chunk_id: number
+  document_id: number
+  document_title: string
+  chunk_index: number
+  /** 来源页码（PDF），纯文本/Word 为 null。 */
+  page: number | null
+  text: string
 }
 
-export interface SearchParams {
-  query: string
-  /** 返回的文本块数量上限。 */
-  topK?: number
-}
-
+/** /search 的统一返回信封。 */
 export interface SearchResult {
   query: string
-  /** 检索耗时（毫秒）。 */
-  tookMs: number
-  /** 实际返回的 topK。 */
-  topK: number
-  /** 命中的文本块列表（按相关度降序）。 */
-  chunks: SearchChunk[]
+  kb_id: number
+  knowledge_base: string
+  count: number
+  /** 相关性不足被拒答：results 恒为空。 */
+  refused: boolean
+  threshold: number
+  best_score: number
+  /** 实际使用的向量后端（milvus / memory）。 */
+  backend: string
+  recall_count: number
+  results: SearchChunk[]
 }
 
-export interface ApiError {
+export interface ChatSession {
+  id: number
+  kb: number
+  title: string
+  created_at: string
+}
+
+export interface ChatMessage {
+  id: number
+  session: number
+  role: 'user' | 'assistant'
+  content: string
+  /** assistant 回答的知识来源（重排后片段）。 */
+  sources: SearchChunk[]
+  created_at: string
+}
+
+/** SSE 聊天事件载荷（与后端 chat.py 对齐）。 */
+export interface ChatSourcesEvent {
+  session_id: number
+  count: number
+  refused: boolean
+  threshold: number
+  best_score: number
+  results: SearchChunk[]
+}
+
+export interface ChatDoneEvent {
+  session_id: number
+  message_id: number
+  answer_length: number
+}
+
+export interface ChatRefusedEvent {
+  session_id: number
   message: string
-  status?: number
+  threshold: number
+  best_score: number
 }

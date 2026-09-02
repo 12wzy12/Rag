@@ -7,7 +7,14 @@ const props = defineProps<{ chunk: SearchChunk }>()
 
 const copied = ref(false)
 
-const scoreText = computed(() => `${Math.round(props.chunk.score * 100)}%`)
+const scoreText = computed(() =>
+  props.chunk.score == null ? '—' : `${Math.round(props.chunk.score * 100)}%`,
+)
+const rerankText = computed(() =>
+  props.chunk.rerank_score == null
+    ? '—'
+    : `${Math.round(props.chunk.rerank_score * 100)}%`,
+)
 
 const scoreClass = computed(() => {
   if (props.chunk.score >= 0.6) return 'high'
@@ -30,11 +37,21 @@ async function copy() {
   <article class="chunk">
     <div class="chunk-head">
       <div class="source">
-        <span class="doc-name" :title="chunk.documentName">{{ chunk.documentName }}</span>
+        <span class="doc-name" :title="chunk.document_title">{{ chunk.document_title }}</span>
         <span v-if="chunk.page != null" class="page">第 {{ chunk.page }} 页</span>
+        <span v-else class="page plain">全文</span>
+        <span class="chunk-index">片段 #{{ chunk.chunk_index + 1 }}</span>
       </div>
       <div class="chunk-meta">
-        <span class="score" :class="scoreClass" :title="`相似度 ${scoreText}`">{{ scoreText }}</span>
+        <span
+          class="score"
+          :class="scoreClass"
+          :title="`向量相似度 ${scoreText}`"
+        >{{ scoreText }}</span>
+        <span
+          class="rerank"
+          :title="`重排分数（向量 ${scoreText} 与词法分融合）`"
+        >重排 {{ rerankText }}</span>
         <button class="copy" :class="{ copied }" @click="copy">
           {{ copied ? '已复制' : '复制' }}
         </button>
@@ -80,13 +97,19 @@ async function copy() {
   white-space: nowrap;
 }
 
-.page {
+.page,
+.chunk-index {
   flex-shrink: 0;
   font-size: 12px;
   color: var(--text-secondary);
   background: var(--surface-2);
   border-radius: var(--radius-sm);
   padding: 1px 8px;
+}
+
+.chunk-index {
+  background: var(--accent-weak);
+  color: var(--accent);
 }
 
 .chunk-meta {
@@ -111,6 +134,15 @@ async function copy() {
 
 .score.low {
   color: var(--muted);
+}
+
+.rerank {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  white-space: nowrap;
 }
 
 .copy {

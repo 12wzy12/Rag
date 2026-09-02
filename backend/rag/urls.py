@@ -1,7 +1,12 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from rag.views import ChunkViewSet, DocumentViewSet, KnowledgeBaseViewSet
+from rag.views import (
+    ChunkViewSet,
+    DocumentViewSet,
+    KnowledgeBaseViewSet,
+    SessionViewSet,
+)
 
 router = DefaultRouter()
 router.register(
@@ -9,6 +14,7 @@ router.register(
 )
 router.register("documents", DocumentViewSet, basename="document")
 router.register("chunks", ChunkViewSet, basename="chunk")
+router.register("sessions", SessionViewSet, basename="session")
 
 app_name = "rag"
 

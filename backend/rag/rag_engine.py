@@ -159,7 +159,7 @@ def retrieve(kb, query, top_k=None):
     """Return the top-k chunks of ``kb`` matching ``query`` via LlamaIndex.
 
     Each result: ``{score, chunk_id, document_id, document_title,
-    chunk_index, text}``, ordered by relevance (descending).
+    chunk_index, page, text}``, ordered by relevance (descending).
     """
     if not query or not query.strip():
         return []
@@ -190,6 +190,7 @@ def retrieve(kb, query, top_k=None):
                 "document_id": chunk.document_id,
                 "document_title": chunk.document.title,
                 "chunk_index": chunk.index,
+                "page": chunk.page,
                 "text": chunk.text,
             }
         )

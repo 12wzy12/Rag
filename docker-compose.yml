@@ -1,0 +1,88 @@
+# RAG 智能知识库：MySQL（业务数据）+ 后端（Django，内嵌 Milvus Lite 向量数据）
+# + 前端（Vue3 / nginx）。
+#
+# 向量存储说明：Milvus Lite 是嵌入式的，直接跑在后端容器内（数据落在
+# ./data/milvus 卷中），因此无需单独的 Milvus 服务即可获得与
+# Milvus Standalone 相同的 PyMilvus 访问层。
+# 若要与独立 Milvus Standalone 对接，将 RAG_MILVUS_URI 改为
+# http://milvus:19530 并启用下方的 milvus-standalone profile。
+#
+# 模型服务（Embedding BGE-M3 / LLM qwen3）：默认使用宿主机的 Ollama
+# （RAG_OLLAMA_BASE_URL=http://host.docker.internal:11434）。
+# Windows Docker Desktop 会自动提供 host.docker.internal；Linux 下需加
+# extra_hosts: ["host.docker.internal:host-gateway"]。
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rag_root_pwd
+      MYSQL_DATABASE: rag
+      MYSQL_USER: rag
+      MYSQL_PASSWORD: rag_pwd
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-urag", "-prag_pwd"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: "*"
+      DB_ENGINE: django.db.backends.mysql
+      DB_NAME: rag
+      DB_USER: rag
+      DB_PASSWORD: rag_pwd
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      RAG_MILVUS_URI: /app/data/milvus/milvus.db
+      RAG_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      RAG_LLM_PROVIDER: ollama
+      RAG_LLM_MODEL: qwen3:8b
+      # 如需远程 OpenAI 兼容 LLM（如 DeepSeek），取消注释：
+      # RAG_LLM_PROVIDER: openai
+      # RAG_LLM_BASE_URL: https://api.deepseek.com/v1
+      # RAG_LLM_API_KEY: sk-xxx
+    volumes:
+      # Milvus Lite 数据（挂载父目录，兼容其目录型存储）。
+      - milvus-data:/app/data/milvus
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # Linux 下访问宿主机 Ollama 需显式声明。
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # 可选：对接独立 Milvus Standalone 时启用：
+  #   docker compose --profile milvus-standalone up -d
+  # 并把 backend 的 RAG_MILVUS_URI 改为 http://milvus:19530。
+  # milvus-standalone:
+  #   image: milvusdb/milvus:latest
+  #   command: ["milvus", "run", "standalone"]
+  #   profiles: ["milvus-standalone"]
+  #   environment:
+  #     ETCD_USE_EMBED: "true"
+  #     ETCD_DATA_DIR: /var/lib/milvus/etcd
+  #     COMMON_STORAGETYPE: local
+  #   volumes:
+  #     - milvus-server-data:/var/lib/milvus
+
+volumes:
+  mysql-data:
+  milvus-data:
+  # milvus-server-data:

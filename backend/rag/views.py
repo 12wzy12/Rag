@@ -1,59 +1,103 @@
+import logging
+
 from django.conf import settings
+from django.http import StreamingHttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from rag import chat as chat_service
 from rag import llm as llm_service
-from rag.models import Chunk, Document, KnowledgeBase
+from rag import services, vector_store
+from rag.models import Chunk, Document, KnowledgeBase, Message, Session
 from rag.serializers import (
+    ChatRequestSerializer,
     ChunkSerializer,
     DocumentSerializer,
     KnowledgeBaseSerializer,
+    MessageSerializer,
     SearchSerializer,
+    SessionSerializer,
 )
-from rag.services import ingest_document, retrieve
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeBaseViewSet(viewsets.ModelViewSet):
-    """Knowledge base (collection of documents sharing one index)."""
+    """Knowledge base (collection of documents sharing one retrieval index)."""
 
     queryset = KnowledgeBase.objects.all()
     serializer_class = KnowledgeBaseSerializer
     lookup_field = "pk"
+    pagination_class = None
 
     @action(detail=True, methods=["post"])
     def search(self, request, pk=None):
-        """Retrieve top-k chunks from a knowledge base for a query."""
+        """Multi-stage retrieval: vector recall + rerank + relevance gate."""
         kb = self.get_object()
         ser = SearchSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         top_k = ser.validated_data.get("top_k", settings.RAG_DEFAULT_TOP_K)
-        results = retrieve(kb, ser.validated_data["query"], top_k=top_k)
-        return Response(
-            {
-                "query": ser.validated_data["query"],
-                "knowledge_base": kb.name,
-                "count": len(results),
-                "results": results,
-            }
+        try:
+            envelope = services.retrieve(kb, ser.validated_data["query"], top_k=top_k)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response(envelope)
+
+    @action(detail=True, methods=["post"])
+    def chat(self, request, pk=None):
+        """SSE chat: retrieval + relevance gate + streamed LLM answer."""
+        kb = self.get_object()
+        ser = ChatRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        top_k = ser.validated_data.get("top_k", settings.RAG_DEFAULT_TOP_K)
+        query = ser.validated_data["query"]
+
+        session_id = ser.validated_data.get("session_id")
+        if session_id is not None:
+            session = Session.objects.filter(pk=session_id, kb=kb).first()
+            if session is None:
+                return Response(
+                    {"detail": f"会话 {session_id} 不存在于该知识库"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        else:
+            session = Session.objects.create(
+                kb=kb, title=query[:30] or "新会话"
+            )
+
+        response = StreamingHttpResponse(
+            chat_service.chat_stream(kb, query, session, top_k=top_k),
+            content_type="text/event-stream; charset=utf-8",
         )
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
 
     @action(detail=True, methods=["post"])
     def answer(self, request, pk=None):
-        """Retrieve context, then generate an answer with the configured LLM.
-
-        Only available when RAG_LLM_BASE_URL / RAG_LLM_API_KEY are configured;
-        otherwise returns 400 so callers fall back to ``search``.
-        """
+        """Non-streaming answer (legacy): returns one JSON payload."""
         kb = self.get_object()
         ser = SearchSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         top_k = ser.validated_data.get("top_k", settings.RAG_DEFAULT_TOP_K)
-        results = retrieve(kb, ser.validated_data["query"], top_k=top_k)
+        query = ser.validated_data["query"]
 
-        if not results:
+        try:
+            result = services.retrieve(kb, query, top_k=top_k)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        if result["refused"]:
             return Response(
-                {"query": ser.validated_data["query"], "answer": "根据现有知识库无法回答", "results": []}
+                {
+                    "query": query,
+                    "answer": chat_service.REFUSED_ANSWER,
+                    "refused": True,
+                    "threshold": result["threshold"],
+                    "best_score": result["best_score"],
+                    "results": [],
+                }
             )
         if not llm_service.is_configured():
             return Response(
@@ -61,20 +105,16 @@ class KnowledgeBaseViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            answer, n = llm_service.generate_answer(
-                ser.validated_data["query"], results
-            )
+            answer, n = llm_service.generate_answer(query, result["results"])
         except RuntimeError as exc:
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response(
             {
-                "query": ser.validated_data["query"],
+                "query": query,
                 "answer": answer,
+                "refused": False,
                 "used_chunks": n,
-                "results": results,
+                "results": result["results"],
             }
         )
 
@@ -92,12 +132,29 @@ class KnowledgeBaseViewSet(viewsets.ModelViewSet):
             }
         )
 
+    def perform_destroy(self, instance):
+        kb_id = instance.id
+        instance.delete()
+        # Drop the vector collection; Chunk rows go away via FK cascade.
+        try:
+            vector_store.get_backend().clear_kb(kb_id)
+        except Exception:
+            logger.exception("清理知识库 %s 的向量数据失败", kb_id)
+
 
 class DocumentViewSet(viewsets.ModelViewSet):
-    """Documents: upload a file, ingest (parse+chunk+index) it."""
+    """Documents: upload a file, ingest (parse + chunk + vectorise) it."""
 
     queryset = Document.objects.all()
     serializer_class = DocumentSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = Document.objects.all()
+        kb = self.request.query_params.get("kb")
+        if kb:
+            queryset = queryset.filter(kb=kb)
+        return queryset
 
     def create(self, request, *args, **kwargs):
         file_obj = request.FILES.get("file")
@@ -136,13 +193,19 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
         raw = file_obj.read()
         try:
-            chunk_total = ingest_document(
+            chunk_total = services.ingest_document(
                 document, raw, file_obj.content_type, file_obj.name
             )
         except ValueError as exc:
+            # Unsupported/unreadable format -> 400 with the readable message.
             return Response(
                 {"detail": str(exc), "document": DocumentSerializer(document).data},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        except RuntimeError as exc:
+            return Response(
+                {"detail": str(exc), "document": DocumentSerializer(document).data},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         return Response(
@@ -155,15 +218,14 @@ class DocumentViewSet(viewsets.ModelViewSet):
         )
 
     def destroy(self, request, *args, **kwargs):
-        from rag import rag_engine
-
         instance = self.get_object()
         kb = instance.kb
-        # Cascade removes chunks via FK.
+        # Vector rows must go away together with the Chunk rows.
+        try:
+            vector_store.get_backend().delete_document(kb, instance.id)
+        except Exception:
+            logger.exception("删除文档 %s 的向量数据失败", instance.id)
         instance.delete()
-        # Drop the persisted index so the next query rebuilds without the
-        # deleted document's chunks.
-        rag_engine.invalidate_kb_index(kb)
         return Response(
             {
                 "message": "已删除文档",
@@ -178,3 +240,47 @@ class ChunkViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = Chunk.objects.select_related("document").all()
     serializer_class = ChunkSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = Chunk.objects.select_related("document").all()
+        kb = self.request.query_params.get("kb")
+        document = self.request.query_params.get("document")
+        if kb:
+            queryset = queryset.filter(kb=kb)
+        if document:
+            queryset = queryset.filter(document=document)
+        return queryset
+
+
+class SessionViewSet(viewsets.ModelViewSet):
+    """Chat sessions; messages are served from the nested ``messages`` action."""
+
+    queryset = Session.objects.all()
+    serializer_class = SessionSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = Session.objects.all()
+        kb = self.request.query_params.get("kb")
+        if kb:
+            queryset = queryset.filter(kb=kb)
+        return queryset
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.delete()
+        return Response({"message": "已删除会话"})
+
+    @action(detail=True, methods=["get"])
+    def messages(self, request, pk=None):
+        session = self.get_object()
+        messages = Message.objects.filter(session=session)
+        ser = MessageSerializer(messages, many=True)
+        return Response(
+            {
+                "session": SessionSerializer(session).data,
+                "count": messages.count(),
+                "messages": ser.data,
+            }
+        )

@@ -66,6 +66,8 @@ class Chunk(models.Model):
     )
     index = models.PositiveIntegerField()
     text = models.TextField()
+    # Source page number for paginated formats (PDF); None otherwise.
+    page = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ["document", "index"]
@@ -73,3 +75,45 @@ class Chunk(models.Model):
 
     def __str__(self):
         return f"{self.document_id}:{self.index}"
+
+
+class Session(models.Model):
+    """A chat session bound to one knowledge base (conversation history)."""
+
+    kb = models.ForeignKey(
+        KnowledgeBase, related_name="sessions", on_delete=models.CASCADE
+    )
+    title = models.CharField(max_length=300)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.kb.name} / {self.title}"
+
+
+class Message(models.Model):
+    """One turn inside a chat session; assistant turns keep their sources."""
+
+    class Role(models.TextChoices):
+        USER = "user", "用户"
+        ASSISTANT = "assistant", "助手"
+
+    session = models.ForeignKey(
+        Session, related_name="messages", on_delete=models.CASCADE
+    )
+    role = models.CharField(max_length=20, choices=Role.choices)
+    content = models.TextField()
+    # Retrieval chunks backing an assistant answer (JSON list of
+    # {score, rerank_score, chunk_id, document_id, document_title,
+    #  chunk_index, page, text}); empty for user turns and refused answers.
+    sources = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["id"]
+        indexes = [models.Index(fields=["session"])]
+
+    def __str__(self):
+        return f"{self.session_id}:{self.role}"

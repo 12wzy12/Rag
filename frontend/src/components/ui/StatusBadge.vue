@@ -6,10 +6,10 @@ import type { DocStatus } from '@/types'
 const props = defineProps<{ status: DocStatus }>()
 
 const LABELS: Record<DocStatus, string> = {
-  uploading: '上传中',
-  processing: '处理中',
+  pending: '待解析',
+  parsing: '解析中',
   ready: '可用',
-  error: '失败',
+  failed: '失败',
 }
 
 const cls = computed(() => `badge badge-${props.status}`)
@@ -44,13 +44,13 @@ const cls = computed(() => `badge badge-${props.status}`)
   background: var(--success-weak);
 }
 
-.badge-processing,
-.badge-uploading {
+.badge-parsing,
+.badge-pending {
   color: var(--warning);
   background: var(--warning-weak);
 }
 
-.badge-error {
+.badge-failed {
   color: var(--danger);
   background: var(--danger-weak);
 }

@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Django
+.env
+staticfiles/
+
+# RAG runtime data (Milvus Lite db, LlamaIndex disk index)
+data/
+rag_index/
+
+# OS
+Thumbs.db
+.DS_Store

@@ -4,8 +4,10 @@ import { useRoute } from 'vue-router'
 const route = useRoute()
 
 const nav = [
-  { path: '/documents', label: '知识库', icon: '📚' },
-  { path: '/search', label: '检索', icon: '🔍' },
+  { path: '/knowledge-bases', label: '知识库管理', icon: '📚' },
+  { path: '/documents', label: '文档上传', icon: '📄' },
+  { path: '/search', label: '语义检索', icon: '🔍' },
+  { path: '/chat', label: '智能问答', icon: '💬' },
 ]
 
 function isActive(path: string): boolean {
@@ -17,7 +19,7 @@ function isActive(path: string): boolean {
   <aside class="sidebar">
     <div class="brand">
       <span class="brand-mark">RAG</span>
-      <span class="brand-text">知识库</span>
+      <span class="brand-text">智能知识库</span>
     </div>
     <nav class="nav">
       <router-link

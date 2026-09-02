@@ -7,8 +7,12 @@ Two providers are supported:
 - ``openai``: an OpenAI-compatible ``/chat/completions`` endpoint
   (e.g. DeepSeek) configured through settings.
 
+Both providers support streaming (``generate_answer_stream``), which powers
+the SSE chat endpoint; ``generate_answer`` is the non-streaming form used by
+the legacy ``/answer`` endpoint.
+
 The retrieval endpoint (``/search``) does not depend on this module; these
-helpers only power the optional ``/answer`` endpoint.
+helpers only power the optional ``/answer`` and ``/chat`` endpoints.
 """
 
 import json
@@ -26,42 +30,89 @@ def is_configured():
     return True
 
 
-def _build_prompt(query, chunks):
-    context = "\n\n".join(
-        f"[片段 {i + 1}]\n{chunk['text']}" for i, chunk in enumerate(chunks)
+def _format_chunks(chunks):
+    return "\n\n".join(
+        f"[片段 {i + 1}]{'（第' + str(c['page']) + '页）' if c.get('page') else ''}\n{c['text']}"
+        for i, c in enumerate(chunks)
     )
+
+
+def _build_prompt(query, chunks):
+    """Single user message with retrieved context (no conversation history)."""
     return (
         "你是知识库问答助手。请仅依据以下检索到的文档片段回答用户问题。"
         "若片段无法回答问题，请明确说明'根据现有知识库无法回答'。"
         "回答使用中文，结合片段内容，不要编造信息。\n\n"
-        f"检索到的文档片段：\n{context}\n\n"
+        f"检索到的文档片段：\n{_format_chunks(chunks)}\n\n"
         f"用户问题：{query}\n\n"
         "回答："
     )
 
 
-def _generate_ollama(query, chunks, timeout):
+def _build_chat_messages(query, chunks, history=None):
+    """Messages for chat endpoints: system instruction + recent history
+    (if any) + the current question carrying the retrieved context.
+
+    ``history``: list of ``{"role": "user"|"assistant", "content": str}``
+    from the conversation's previous turns.
+    """
+    context = _format_chunks(chunks)
+    turns = settings.RAG_CHAT_HISTORY_TURNS
+    history = history or []
+    recent = history[-2 * int(turns):]
+
+    if not recent:
+        return [{"role": "user", "content": _build_prompt(query, chunks)}]
+
+    system = (
+        "你是知识库问答助手。请仅依据检索到的文档片段与对话历史回答用户问题。"
+        "若片段无法回答问题，请明确说明'根据现有知识库无法回答'。"
+        "回答使用中文，结合片段内容，不要编造信息，保持上下文一致。"
+    )
+    messages = [{"role": "system", "content": system}]
+    messages.extend(recent)
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "检索到的文档片段：\n"
+                f"{context}\n\n"
+                f"用户问题：{query}\n\n"
+                "回答："
+            ),
+        }
+    )
+    return messages
+
+
+def _timeout():
+    return getattr(settings, "RAG_LLM_TIMEOUT", 300)
+
+
+def _stream_ollama(query, chunks, history):
     import ollama
 
-    client = ollama.Client(host=settings.RAG_OLLAMA_BASE_URL, timeout=timeout)
-    response = client.chat(
+    client = ollama.Client(host=settings.RAG_OLLAMA_BASE_URL, timeout=_timeout())
+    messages = _build_chat_messages(query, chunks, history)
+    stream = client.chat(
         model=settings.RAG_LLM_MODEL,
-        messages=[{"role": "user", "content": _build_prompt(query, chunks)}],
+        messages=messages,
         options={"temperature": 0.2},
         keep_alive=settings.RAG_OLLAMA_KEEP_ALIVE,
+        stream=True,
     )
-    answer = response["message"]["content"].strip()
-    if not answer:
-        raise RuntimeError("模型返回了空回答")
-    return answer
+    for piece in stream:
+        content = piece.get("message", {}).get("content", "")
+        if content:
+            yield content
 
 
-def _generate_openai(query, chunks, timeout):
+def _stream_openai(query, chunks, history):
     payload = {
         "model": settings.RAG_LLM_MODEL,
-        "messages": [{"role": "user", "content": _build_prompt(query, chunks)}],
+        "messages": _build_chat_messages(query, chunks, history),
         "temperature": 0.2,
-        "stream": False,
+        "stream": True,
     }
     req = urllib.request.Request(
         f"{settings.RAG_LLM_BASE_URL.rstrip('/')}/chat/completions",
@@ -81,31 +132,62 @@ def _generate_openai(query, chunks, timeout):
         opener = urllib.request.build_opener()
 
     try:
-        with opener.open(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        resp = opener.open(req, timeout=_timeout())
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"模型接口返回 {exc.code}: {body[:300]}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"无法连接模型服务: {exc.reason}") from exc
 
-    try:
-        return data["choices"][0]["message"]["content"].strip(), len(chunks)
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(f"模型返回格式异常: {str(data)[:300]}") from exc
+    with resp:
+        for raw in resp:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                break
+            try:
+                delta = json.loads(data)["choices"][0]["delta"].get("content")
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+                continue
+            if delta:
+                yield delta
 
 
-def generate_answer(query, chunks, timeout=300):
-    """Ask the configured LLM to answer ``query`` from ``chunks``.
+def generate_answer_stream(query, chunks, history=None):
+    """Stream answer pieces for ``query`` grounded in ``chunks``.
 
-    Returns ``(answer_text, sources_count)``. Raises ``RuntimeError`` with a
-    readable message on model-call failure.
+    Yields answer text fragments as they arrive. Raises ``RuntimeError``
+    with a readable message when the model call fails, and when the model
+    produced no content at all.
     """
     if not query or not chunks:
         raise RuntimeError("缺少查询或检索上下文")
 
-    if settings.RAG_LLM_PROVIDER == "openai":
-        answer, n = _generate_openai(query, chunks, timeout)
-    else:
-        answer = _generate_ollama(query, chunks, timeout)
-    return answer, len(chunks)
+    try:
+        if settings.RAG_LLM_PROVIDER == "openai":
+            pieces = _stream_openai(query, chunks, history)
+        else:
+            pieces = _stream_ollama(query, chunks, history)
+        total = []
+        for piece in pieces:
+            total.append(piece)
+            yield piece
+    except RuntimeError:
+        raise
+    except Exception as exc:  # transport/parsing hiccups from the client libs
+        raise RuntimeError(f"模型调用失败: {exc}") from exc
+
+    if not "".join(total).strip():
+        raise RuntimeError("模型返回了空回答")
+
+
+def generate_answer(query, chunks, history=None, timeout=300):
+    """Non-streaming answer: join :func:`generate_answer_stream` output.
+
+    Returns ``(answer_text, sources_count)``; raises ``RuntimeError`` with a
+    readable message on model-call failure.
+    """
+    pieces = list(generate_answer_stream(query, chunks, history))
+    return "".join(pieces), len(chunks)

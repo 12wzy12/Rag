@@ -4,10 +4,12 @@ import { ref } from 'vue'
 import { useDocumentsStore } from '@/stores/documents'
 import { formatBytes } from '@/utils/format'
 
+const props = defineProps<{ kbId: number }>()
+
 const store = useDocumentsStore()
 
 const ACCEPT =
-  '.pdf,.doc,.docx,.txt,.md,.xls,.xlsx,.ppt,.pptx,.csv,.html,.epub'
+  '.pdf,.docx,.doc,.txt,.md,.csv,.json,.html,.htm,.xml'
 
 const inputRef = ref<HTMLInputElement | null>(null)
 const pending = ref<File[]>([])
@@ -34,7 +36,7 @@ function onDrop(event: DragEvent) {
 async function startUpload() {
   if (!pending.value.length || store.uploading) return
   try {
-    await store.upload(pending.value)
+    await store.upload(props.kbId, pending.value)
     pending.value = []
   } catch {
     // 错误已写入 store.uploadError，由模板展示。
@@ -67,7 +69,9 @@ async function startUpload() {
       <p class="dropzone-text">
         拖拽文档到此处，或 <span class="link">点击选择文件</span>
       </p>
-      <p class="dropzone-hint">支持 PDF、Word、Markdown 等常用文档格式</p>
+      <p class="dropzone-hint">
+        支持 PDF、Word(docx)、Markdown、TXT、CSV、HTML 等常用文档格式
+      </p>
     </div>
 
     <div v-if="pending.length" class="pending">
@@ -84,7 +88,7 @@ async function startUpload() {
       <div class="pending-actions">
         <button class="btn" :disabled="store.uploading" @click="pending = []">清空</button>
         <button class="btn primary" :disabled="store.uploading" @click="startUpload">
-          <span v-if="store.uploading">上传中…</span>
+          <span v-if="store.uploading">上传解析中…</span>
           <span v-else>上传到知识库</span>
         </button>
       </div>
@@ -94,7 +98,9 @@ async function startUpload() {
       <div class="progress-bar">
         <div class="progress-fill" :style="{ width: store.uploadProgress + '%' }" />
       </div>
-      <span class="progress-label">{{ store.uploadProgress }}%</span>
+      <span class="progress-label">
+        {{ store.uploadDone }}/{{ store.uploadTotal }} · {{ store.uploadProgress }}%
+      </span>
     </div>
 
     <p v-if="store.uploadError" class="error">{{ store.uploadError }}</p>
@@ -264,8 +270,9 @@ async function startUpload() {
 .progress-label {
   font-size: 12px;
   color: var(--text-secondary);
-  min-width: 36px;
+  min-width: 90px;
   text-align: right;
+  white-space: nowrap;
 }
 
 .error {

@@ -9,11 +9,11 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 const store = useDocumentsStore()
 
 function onRefresh() {
-  store.fetchDocuments()
+  if (store.kbId != null) store.fetchDocuments(store.kbId)
 }
 
-async function onDelete(id: string, name: string) {
-  if (!window.confirm(`确定删除文档「${name}」吗？此操作不可撤销。`)) return
+async function onDelete(id: number, name: string) {
+  if (!window.confirm(`确定删除文档「${name}」吗？其向量数据将一并清除。`)) return
   try {
     await store.remove(id)
   } catch {
@@ -43,13 +43,14 @@ async function onDelete(id: string, name: string) {
       v-else-if="!store.items.length"
       icon="🗂️"
       title="知识库还是空的"
-      description="上传你的第一批文档，系统会自动切分并建立索引。"
+      description="上传你的第一批文档，系统会自动解析、切分并建立向量索引。"
     />
 
     <table v-else class="doc-table">
       <thead>
         <tr>
           <th>文档名称</th>
+          <th>类型</th>
           <th>大小</th>
           <th>文本块</th>
           <th>状态</th>
@@ -59,16 +60,17 @@ async function onDelete(id: string, name: string) {
       </thead>
       <tbody>
         <tr v-for="doc in store.items" :key="doc.id">
-          <td class="doc-name" :title="doc.name">{{ doc.name }}</td>
+          <td class="doc-name" :title="doc.file_name">{{ doc.title }}</td>
+          <td class="doc-type">{{ doc.content_type || '未知' }}</td>
           <td>{{ formatBytes(doc.size) }}</td>
-          <td>{{ doc.chunks }}</td>
+          <td>{{ doc.chunk_count }}</td>
           <td>
             <StatusBadge :status="doc.status" />
             <p v-if="doc.error" class="doc-error" :title="doc.error">{{ doc.error }}</p>
           </td>
-          <td>{{ formatTime(doc.uploadedAt) }}</td>
+          <td>{{ formatTime(doc.created_at) }}</td>
           <td class="col-actions">
-            <button class="delete" title="删除" @click="onDelete(doc.id, doc.name)">删除</button>
+            <button class="delete" title="删除" @click="onDelete(doc.id, doc.title)">删除</button>
           </td>
         </tr>
       </tbody>
@@ -171,7 +173,15 @@ async function onDelete(id: string, name: string) {
 .doc-name {
   font-weight: 600;
   color: var(--text);
-  max-width: 280px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-type {
+  color: var(--text-secondary);
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

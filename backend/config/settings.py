@@ -147,13 +147,20 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 # ---- Django REST Framework ----
+# Authentication classes are intentionally cleared: this deployment has no
+# user system, and DRF's CSRF check only fires when SessionAuthentication
+# finds an authenticated session. With the classes empty, session cookies
+# (e.g. from an /admin login in the same browser) never trigger CSRF errors
+# on the JSON/SSE endpoints.
 REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.AllowAny",
+    ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
-    "PAGE_SIZE": 20,
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
 }
 
 # ---- CORS ----
@@ -196,3 +203,40 @@ RAG_LLM_MODEL = _env("RAG_LLM_MODEL", "qwen3:8b")
 RAG_LLM_BASE_URL = _env("RAG_LLM_BASE_URL", "")
 RAG_LLM_API_KEY = _env("RAG_LLM_API_KEY", "")
 RAG_LLM_HTTP_PROXY = _env("RAG_LLM_HTTP_PROXY", "")
+# Timeout (seconds) for a single LLM answer call.
+RAG_LLM_TIMEOUT = int(_env("RAG_LLM_TIMEOUT", "300"))
+
+# ---- RAG / vector store ----
+# "milvus" (Milvus Lite embedded, default) or "memory" (LlamaIndex disk
+# persistence; used by hermetic tests and as an explicit fallback).
+RAG_VECTOR_BACKEND = _env("RAG_VECTOR_BACKEND", "milvus")
+# Milvus Lite data location. May be a file or a directory (engine decides).
+RAG_MILVUS_URI = _env("RAG_MILVUS_URI", str(BASE_DIR / "data" / "milvus" / "milvus.db"))
+# When the Milvus backend fails to initialise, fall back to "memory" so the
+# API stays usable (chunks in MySQL remain the source of truth).
+RAG_VECTOR_FALLBACK_TO_MEMORY = _env("RAG_VECTOR_FALLBACK_TO_MEMORY", "1") == "1"
+# How many texts per batch when embedding document chunks.
+RAG_EMBED_BATCH_SIZE = int(_env("RAG_EMBED_BATCH_SIZE", "32"))
+
+# ---- RAG / reranker ----
+# "fusion" (local, zero-dependency hybrid of vector score + BM25-like lexical
+# score) or "api" (OpenAI-compatible /rerank endpoint; reserved for later).
+RAG_RERANK_PROVIDER = _env("RAG_RERANK_PROVIDER", "fusion")
+# Weight of the vector score in the fused score (1-alpha for lexical).
+RAG_RERANK_ALPHA = float(_env("RAG_RERANK_ALPHA", "0.6"))
+# First stage recall = top_k * RAG_RECALL_MULTIPLIER, capped at RAG_RECALL_MAX.
+RAG_RECALL_MULTIPLIER = int(_env("RAG_RECALL_MULTIPLIER", "3"))
+RAG_RECALL_MAX = int(_env("RAG_RECALL_MAX", "50"))
+
+# ---- RAG / anti-hallucination ----
+# Below this best (reranked) relevance score the system refuses to answer
+# without an LLM call ("根据现有知识库无法回答"). Tune for the embedding
+# model in use; the lexical fallback embedding produces much lower scores.
+# bge-m3 note: unrelated Chinese queries typically score 0.30-0.45 cosine,
+# so the default sits at 0.40; calibrate with a few unrelated probe queries.
+RAG_SIMILARITY_THRESHOLD = float(_env("RAG_SIMILARITY_THRESHOLD", "0.40"))
+
+# ---- RAG / chat history ----
+# Number of previous user/assistant turns (per session) injected into the
+# LLM prompt as conversation context.
+RAG_CHAT_HISTORY_TURNS = int(_env("RAG_CHAT_HISTORY_TURNS", "4"))
