@@ -3,7 +3,7 @@ from django.utils import timezone
 
 
 class KnowledgeBase(models.Model):
-    """A logical collection of documents that share one retrieval index."""
+    """共享同一检索索引的文档的逻辑集合。"""
 
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True, default="")
@@ -38,7 +38,7 @@ class Document(models.Model):
     file_name = models.CharField(max_length=500, blank=True, default="")
     content_type = models.CharField(max_length=200, blank=True, default="")
     size = models.PositiveBigIntegerField(default=0)
-    # Full extracted plain-text of the document.
+    # 文档解析后提取出的完整纯文本。
     text = models.TextField(blank=True, default="")
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING
@@ -56,7 +56,7 @@ class Document(models.Model):
 
 
 class Chunk(models.Model):
-    """One indexed segment of a document, produced at ingestion time."""
+    """文档的一个索引片段，在文档入库时生成。"""
 
     kb = models.ForeignKey(
         KnowledgeBase, related_name="chunks", on_delete=models.CASCADE
@@ -66,7 +66,7 @@ class Chunk(models.Model):
     )
     index = models.PositiveIntegerField()
     text = models.TextField()
-    # Source page number for paginated formats (PDF); None otherwise.
+    # 分页格式（如 PDF）的来源页码；其他格式为 None。
     page = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
@@ -78,7 +78,7 @@ class Chunk(models.Model):
 
 
 class Session(models.Model):
-    """A chat session bound to one knowledge base (conversation history)."""
+    """绑定到某个知识库的聊天会话（保存对话历史）。"""
 
     kb = models.ForeignKey(
         KnowledgeBase, related_name="sessions", on_delete=models.CASCADE
@@ -94,7 +94,7 @@ class Session(models.Model):
 
 
 class Message(models.Model):
-    """One turn inside a chat session; assistant turns keep their sources."""
+    """聊天会话中的一轮消息；助手轮次会保留其引用来源。"""
 
     class Role(models.TextChoices):
         USER = "user", "用户"
@@ -105,9 +105,9 @@ class Message(models.Model):
     )
     role = models.CharField(max_length=20, choices=Role.choices)
     content = models.TextField()
-    # Retrieval chunks backing an assistant answer (JSON list of
+    # 支撑助手回答的检索片段（JSON 列表，元素含
     # {score, rerank_score, chunk_id, document_id, document_title,
-    #  chunk_index, page, text}); empty for user turns and refused answers.
+    #  chunk_index, page, text}）；用户轮次与拒绝回答时为空列表。
     sources = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 

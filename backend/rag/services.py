@@ -1,20 +1,19 @@
-"""RAG ingestion and retrieval services.
+"""RAG 文档导入与检索服务。
 
-Ingestion pipeline (per uploaded document):
+导入流水线（每份上传的文档）：
 
-    file bytes -> :func:`parsers.extract_text` (per page, with page numbers
-    for PDFs) -> :func:`chunking.chunk_pages` (LlamaIndex SentenceSplitter)
-    -> ``Chunk`` rows in MySQL (business data) -> embedding batch (BGE-M3 via
-    Ollama by default) -> vectors upserted into Milvus (vector data).
+    文件字节 -> :func:`parsers.extract_text`（逐页提取，PDF 带页码）
+    -> :func:`chunking.chunk_pages`（LlamaIndex SentenceSplitter）
+    -> MySQL 中的 ``Chunk`` 记录（业务数据）-> 批量嵌入（默认经 Ollama
+    使用 BGE-M3）-> 向量 upsert 至 Milvus（向量数据）。
 
-Retrieval pipeline (multi-stage, per query):
+检索流水线（多阶段，按查询执行）：
 
-    embed query -> first stage: Milvus vector recall (top_k * recall
-    multiplier, capped) -> second stage: :func:`reranker.rerank` hybrid
-    rerank -> decorate with document metadata -> relevance gate: when no
-    chunk clears ``RAG_SIMILARITY_THRESHOLD`` the query is *refused*
-    (``refused=True``, empty results) so the caller never hands a weak
-    context to the LLM.
+    查询嵌入 -> 第一阶段：Milvus 向量召回（top_k * 召回倍数，设有上限）
+    -> 第二阶段：:func:`reranker.rerank` 混合重排 -> 附加文档元数据
+    -> 相关度闸门：当没有任何分块达到 ``RAG_SIMILARITY_THRESHOLD`` 时，
+    查询被 *拒绝*（``refused=True``，结果为空），调用方绝不会把弱相关
+    上下文交给 LLM。
 """
 
 import logging
@@ -28,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 def _embed_texts(texts):
-    """Embed a list of texts with the configured embedding model (BGE-M3 via
-    Ollama by default). Raises ``RuntimeError`` on service failure."""
+    """用配置的嵌入模型（默认经 Ollama 调用 BGE-M3）批量嵌入文本。
+    服务调用失败时抛出 ``RuntimeError``。"""
     embed_model = rag_engine.get_embed_model()
     batch_size = settings.RAG_EMBED_BATCH_SIZE
     embeddings = []
@@ -58,12 +57,11 @@ def _embed_query(query):
 
 
 def ingest_document(document, raw_bytes, content_type, file_name):
-    """Parse, chunk and vector-index a :class:`Document`.
+    """解析、分块并为 :class:`Document` 建立向量索引。
 
-    Replaces any previously indexed chunks for the same document. On
-    success the document is marked ``ready``; failures mark it ``failed``
-    with a readable error (unsupported formats raise ``ValueError``,
-    everything else a ``RuntimeError`` for the caller to surface as 503).
+    会替换该文档此前已索引的所有分块。成功后文档标记为 ``ready``；
+    失败时标记为 ``failed`` 并附可读错误信息（不支持的格式抛出
+    ``ValueError``，其余情况抛出 ``RuntimeError``，由调用方以 503 返回）。
     """
     document.status = Document.Status.PARSING
     document.error = ""
@@ -79,8 +77,8 @@ def ingest_document(document, raw_bytes, content_type, file_name):
 
     backend = vector_store.get_backend()
 
-    # Vector backend is Milvus: embeddings must be produced before any
-    # chunk row is written, so an embedding outage leaves no half-state.
+    # 向量后端为 Milvus：必须在写入任何分块记录前先完成嵌入，
+    # 这样嵌入服务中断也不会留下半成品状态。
     embeddings = None
     if backend.name == "milvus":
         embeddings = _embed_texts([c["text"] for c in chunks_payload])
@@ -103,8 +101,8 @@ def ingest_document(document, raw_bytes, content_type, file_name):
         )
 
         if backend.name == "milvus":
-            # Idempotent re-ingest: drop stale vectors of this document,
-            # then insert the fresh chunk vectors.
+            # 幂等重导：先删除该文档的过期向量，
+            # 再插入新生成的分块向量。
             chunks = list(
                 Chunk.objects.filter(document=document).order_by("index")
             )
@@ -141,7 +139,7 @@ def ingest_document(document, raw_bytes, content_type, file_name):
 
 
 def _join_pages(pages):
-    """Join per-page texts into one audit text with page separators."""
+    """将各页文本按页码分隔拼接为一份存档文本。"""
     parts = []
     for page in pages:
         if page["page"] is not None:
@@ -158,14 +156,14 @@ def _mark_failed(document, message):
 
 
 def retrieve(kb, query, top_k=None):
-    """Multi-stage retrieval for ``kb``; returns a uniform result envelope.
+    """对 ``kb`` 执行多阶段检索；返回统一的结果信封。
 
-    Envelope: ``{query, kb_id, knowledge_base, count, refused, threshold,
-    best_score, backend, recall_count, results}`` where each result is
+    信封结构：``{query, kb_id, knowledge_base, count, refused, threshold,
+    best_score, backend, recall_count, results}``，其中每条结果为
     ``{score, rerank_score, chunk_id, document_id, document_title,
-    chunk_index, page, text}``. ``refused=True`` (with empty ``results``)
-    when no chunk clears ``RAG_SIMILARITY_THRESHOLD``; callers must not
-    forward a weak context to the LLM.
+    chunk_index, page, text}``。当没有任何分块达到
+    ``RAG_SIMILARITY_THRESHOLD`` 时 ``refused=True``（且 ``results`` 为空）；
+    调用方不得把弱相关上下文转发给 LLM。
     """
     top_k = top_k or settings.RAG_DEFAULT_TOP_K
     base = {
@@ -252,7 +250,7 @@ def retrieve(kb, query, top_k=None):
     )
     base["refused"] = base["best_score"] < settings.RAG_SIMILARITY_THRESHOLD
     if base["refused"]:
-        # Keep the count honest but never expose weak context as answers.
+        # 保持计数如实，但绝不把弱相关上下文当作答案返回。
         base["results"] = []
         base["count"] = 0
     return base

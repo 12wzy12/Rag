@@ -1,16 +1,14 @@
-"""Second-stage reranking of first-stage vector recall.
+"""第二阶段重排：对第一阶段向量召回的结果进行重排。
 
-Two providers:
+两种提供方：
 
-- ``fusion`` (default): zero-dependency hybrid reranker. Each candidate gets a
-  BM25-like lexical score against the query (built on the project's own
-  CJK-aware tokenizer, no external NLP deps) and the fused score is a convex
-  combination of the normalised vector score and the normalised lexical
-  score. This re-orders candidates whose lexical overlap is stronger than
-  raw vector distance and requires no extra model or network.
-- ``api``: reserved extension point for an OpenAI-compatible ``/rerank``
-  endpoint (e.g. SiliconFlow's bge-reranker-v2-m3); implemented but off by
-  default (``RAG_RERANK_PROVIDER=api`` + base URL/API key).
+- ``fusion``（默认）：零依赖的混合重排器。每个候选获得一个相对查询的
+  类 BM25 词法评分（基于项目自带、可识别中日韩文本的分词器构建，无外部
+  NLP 依赖），融合分数为归一化向量分数与归一化词法分数的凸组合。它能将
+  词法重叠度强于原始向量距离的候选重新排到前面，且无需额外模型或网络。
+- ``api``：面向兼容 OpenAI 的 ``/rerank`` 接口（如 SiliconFlow 的
+  bge-reranker-v2-m3）预留的扩展点；已实现但默认关闭
+  （``RAG_RERANK_PROVIDER=api`` + base URL/API key）。
 """
 
 import math
@@ -24,10 +22,10 @@ _B = 0.75
 
 
 def _lexical_scores(query, candidates):
-    """BM25-like scores of every candidate against the query.
+    """计算每个候选相对查询的类 BM25 分数。
 
-    ``candidates`` are the candidate texts; scores use the corpus of the
-    candidates themselves for document frequency and average length.
+    ``candidates`` 为候选文本；词频（document frequency）与平均长度
+    基于候选文本自身构成的语料进行统计。
     """
     query_tokens = list(dict.fromkeys(tokenize(query)))
     if not query_tokens or not candidates:
@@ -72,11 +70,11 @@ def _min_max_normalise(values):
 
 
 def rerank(query, candidates, top_k):
-    """Re-rank first-stage ``candidates`` and return the best ``top_k``.
+    """对第一阶段的 ``candidates`` 进行重排，返回最优的 ``top_k`` 个。
 
-    ``candidates``: ``[{chunk_id, score, text}]`` (``score`` = raw vector
-    similarity, descending). Returns the same dicts plus ``rerank_score``
-    (the fused relevance, 0-1), re-ordered by fused score descending.
+    ``candidates``：``[{chunk_id, score, text}]``（``score`` 为原始向量
+    相似度，降序）。返回原有字典并附加 ``rerank_score``（融合相关度，
+    取值 0-1），按融合分数降序重新排列。
     """
     if not candidates:
         return []
@@ -101,10 +99,10 @@ def rerank(query, candidates, top_k):
 
 
 def rerank_api(query, candidates, top_k):
-    """Rerank through an OpenAI-compatible ``/rerank`` endpoint.
+    """通过兼容 OpenAI 的 ``/rerank`` 接口进行重排。
 
-    Enabled when ``RAG_RERANK_PROVIDER=api``; returns candidates sorted by
-    the model score. Raises ``RuntimeError`` when unconfigured or on failure.
+    当 ``RAG_RERANK_PROVIDER=api`` 时启用；返回按模型分数排序的候选。
+    未配置或调用失败时抛出 ``RuntimeError``。
     """
     base = getattr(settings, "RAG_RERANK_API_BASE_URL", "")
     key = getattr(settings, "RAG_RERANK_API_KEY", "")
@@ -140,8 +138,8 @@ def rerank_api(query, candidates, top_k):
     except urllib.error.URLError as exc:
         raise RuntimeError(f"无法连接 Rerank 服务: {exc.reason}") from exc
 
-    # Accept both {"results": [{"index", "relevance_score"}]} and
-    # {"data": [{"index", "score"}]} response shapes.
+    # 同时兼容两种响应结构：{"results": [{"index", "relevance_score"}]}
+    # 与 {"data": [{"index", "score"}]}。
     raw = data.get("results") or data.get("data") or []
     ranking = {}
     for item in raw:
@@ -156,6 +154,6 @@ def rerank_api(query, candidates, top_k):
             merged = dict(candidate)
             merged["rerank_score"] = round(ranking[index], 6)
             ordered.append(merged)
-    # Candidates absent from the rerank response keep their vector rank.
+    # 未出现在重排响应中的候选，保持其原有向量排名。
     ordered.sort(key=lambda c: c["rerank_score"], reverse=True)
     return ordered[: int(top_k)]

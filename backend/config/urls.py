@@ -1,4 +1,4 @@
-"""URL configuration for the RAG backend project."""
+"""RAG 后端项目的 URL 配置。"""
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeBaseViewSet(viewsets.ModelViewSet):
-    """Knowledge base (collection of documents sharing one retrieval index)."""
+    """知识库（共享同一检索索引的文档集合）。"""
 
     queryset = KnowledgeBase.objects.all()
     serializer_class = KnowledgeBaseSerializer
@@ -33,7 +33,7 @@ class KnowledgeBaseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def search(self, request, pk=None):
-        """Multi-stage retrieval: vector recall + rerank + relevance gate."""
+        """多阶段检索：向量召回 + 重排 + 相关性门控。"""
         kb = self.get_object()
         ser = SearchSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -46,7 +46,7 @@ class KnowledgeBaseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def chat(self, request, pk=None):
-        """SSE chat: retrieval + relevance gate + streamed LLM answer."""
+        """SSE 聊天：检索 + 相关性门控 + 流式 LLM 回答。"""
         kb = self.get_object()
         ser = ChatRequestSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -76,7 +76,7 @@ class KnowledgeBaseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def answer(self, request, pk=None):
-        """Non-streaming answer (legacy): returns one JSON payload."""
+        """非流式回答（旧接口）：返回单个 JSON 响应体。"""
         kb = self.get_object()
         ser = SearchSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -120,7 +120,7 @@ class KnowledgeBaseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def documents(self, request, pk=None):
-        """List documents belonging to a knowledge base."""
+        """列出属于某个知识库的文档。"""
         kb = self.get_object()
         docs = Document.objects.filter(kb=kb)
         ser = DocumentSerializer(docs, many=True)
@@ -135,7 +135,7 @@ class KnowledgeBaseViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         kb_id = instance.id
         instance.delete()
-        # Drop the vector collection; Chunk rows go away via FK cascade.
+        # 删除向量集合；Chunk 行会随外键级联删除。
         try:
             vector_store.get_backend().clear_kb(kb_id)
         except Exception:
@@ -143,7 +143,7 @@ class KnowledgeBaseViewSet(viewsets.ModelViewSet):
 
 
 class DocumentViewSet(viewsets.ModelViewSet):
-    """Documents: upload a file, ingest (parse + chunk + vectorise) it."""
+    """文档：上传文件并入库（解析 + 切分 + 向量化）。"""
 
     queryset = Document.objects.all()
     serializer_class = DocumentSerializer
@@ -197,7 +197,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
                 document, raw, file_obj.content_type, file_obj.name
             )
         except ValueError as exc:
-            # Unsupported/unreadable format -> 400 with the readable message.
+            # 不支持/无法读取的格式 -> 返回 400 及可读的错误信息。
             return Response(
                 {"detail": str(exc), "document": DocumentSerializer(document).data},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -220,7 +220,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         kb = instance.kb
-        # Vector rows must go away together with the Chunk rows.
+        # 向量数据必须与 Chunk 行一并删除。
         try:
             vector_store.get_backend().delete_document(kb, instance.id)
         except Exception:
@@ -236,7 +236,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
 
 class ChunkViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only view into indexed chunks (debugging / audit)."""
+    """已索引片段的只读视图（调试 / 审计用）。"""
 
     queryset = Chunk.objects.select_related("document").all()
     serializer_class = ChunkSerializer
@@ -254,7 +254,7 @@ class ChunkViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class SessionViewSet(viewsets.ModelViewSet):
-    """Chat sessions; messages are served from the nested ``messages`` action."""
+    """聊天会话；消息通过嵌套的 ``messages`` action 提供。"""
 
     queryset = Session.objects.all()
     serializer_class = SessionSerializer

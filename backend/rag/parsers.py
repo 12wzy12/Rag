@@ -1,18 +1,16 @@
-"""Document parsing: raw file bytes -> list of (page, text) segments.
+"""文档解析：原始文件字节 -> 页文本 (page, text) 段列表。
 
-Supported formats:
+支持的格式：
 
-- PDF (``application/pdf``): extracted per page with PyMuPDF; each page keeps
-  its 1-based page number so downstream chunks can carry source metadata.
-- Word (``.docx``): extracted with python-docx; no page information is
-  available from the format itself (``page=None``).
-- Plain-text formats (txt/md/csv/json/html/xml): decoded as before,
-  ``page=None``.
+- PDF（``application/pdf``）：用 PyMuPDF 按页提取文本；每页保留从 1 起始的
+  页码，使下游分块能携带来源元数据。
+- Word（``.docx``）：用 python-docx 提取文本；该格式本身不提供页码信息
+  （``page=None``）。
+- 纯文本格式（txt/md/csv/json/html/xml）：按文本解码，``page=None``。
 
-Text is lightly cleaned per page/segment before chunking (see
-:func:`_clean_text`): normalise line endings, strip control characters and
-collapse long blank runs. Binary formats we cannot parse raise ``ValueError``
-with a readable Chinese message.
+文本在分块前会按页/段做轻度清洗（见 :func:`_clean_text`）：统一换行符、
+剔除控制字符并压缩过长的空行序列。无法解析的二进制格式抛出带可读中文提示
+的 ``ValueError``。
 """
 
 import re
@@ -58,7 +56,7 @@ def _strip_html(text):
 
 
 def _clean_text(text):
-    """Normalise line endings, drop control characters, collapse blank runs."""
+    """统一换行符，剔除控制字符，压缩连续空行。"""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _CONTROL.sub("", text)
     text = _BLANK_RUN.sub("\n\n", text)
@@ -66,9 +64,9 @@ def _clean_text(text):
 
 
 def _extract_pdf(raw_bytes):
-    """Extract per-page text from a PDF using PyMuPDF (import name ``fitz``).
+    """使用 PyMuPDF（导入名 ``fitz``）逐页提取 PDF 文本。
 
-    Raises ``ValueError`` when the bytes are not a readable PDF.
+    当字节数据不是可读的 PDF 时抛出 ``ValueError``。
     """
     try:
         import fitz
@@ -77,7 +75,7 @@ def _extract_pdf(raw_bytes):
 
     try:
         doc = fitz.open(stream=raw_bytes, filetype="pdf")
-    except Exception as exc:  # fitz.FileDataError / RuntimeError for garbage
+    except Exception as exc:  # fitz.FileDataError / RuntimeError 等无效内容异常
         raise ValueError(f"无法解析 PDF 文件: {exc}") from exc
 
     pages = []
@@ -94,7 +92,7 @@ def _extract_pdf(raw_bytes):
 
 
 def _extract_docx(raw_bytes):
-    """Extract text from a .docx (python-docx); page info is unavailable."""
+    """从 .docx 提取文本（python-docx）；无页码信息。"""
     try:
         from docx import Document
     except ImportError as exc:
@@ -113,15 +111,14 @@ def _extract_docx(raw_bytes):
 
 
 def extract_text(raw_bytes, content_type, file_name):
-    """Return ``[{"page": int|None, "text": str}, ...]`` for an uploaded file.
+    """返回上传文件的 ``[{"page": int|None, "text": str}, ...]`` 段列表。
 
-    Raises ``ValueError`` with a readable message for unsupported or
-    unreadable formats.
+    对不支持或无法读取的格式，抛出带可读提示的 ``ValueError``。
     """
     ctype = (content_type or "").lower()
     name = (file_name or "").lower()
 
-    # Binary formats first, so they never fall through to text decoding.
+    # 二进制格式优先处理，避免落入文本解码分支。
     if ctype == "application/pdf" or name.endswith(".pdf"):
         return _extract_pdf(raw_bytes)
     if ctype == _DOCX_MIME or name.endswith(".docx"):

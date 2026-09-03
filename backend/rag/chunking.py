@@ -1,9 +1,8 @@
-"""Chunking: page (or segment) texts -> LlamaIndex chunks with page metadata.
+"""分块：将页（或段）文本切分为带页码元数据的 LlamaIndex 分块。
 
-Each page/segment becomes one LlamaIndex ``Document`` carrying ``page`` in its
-metadata; ``SentenceSplitter`` then splits the whole book at once. Chunks that
-span a page boundary inherit the metadata of the page they start in — this is
-deliberate: the source citation points at the segment the reader should open.
+每页/每段生成一个 LlamaIndex ``Document``，页码 ``page`` 存入其元数据；
+``SentenceSplitter`` 随后一次性切分整篇文档。跨页边界的分块继承其起始页
+的元数据——这是有意为之：来源引用应指向读者需要打开的那一段。
 """
 
 from django.conf import settings
@@ -12,9 +11,9 @@ from llama_index.core.node_parser import SentenceSplitter
 
 
 def chunk_pages(pages, chunk_size=None, chunk_overlap=None):
-    """Split ``[{"page": int|None, "text": str}]`` into chunks.
+    """将 ``[{"page": int|None, "text": str}]`` 切分为分块。
 
-    Returns ``[{"page": int|None, "text": str}]`` ready for persistence.
+    返回可直接持久化的 ``[{"page": int|None, "text": str}]`` 列表。
     """
     if chunk_size is None:
         chunk_size = settings.RAG_CHUNK_SIZE
@@ -29,8 +28,8 @@ def chunk_pages(pages, chunk_size=None, chunk_overlap=None):
     for segment in pages:
         if not segment["text"]:
             continue
-        # Only attach metadata when there is a real page number, keeping
-        # llama-index node metadata free of None values.
+        # 仅在存在真实页码时附加元数据，
+        # 使 llama-index 节点元数据不出现 None 值。
         metadata = (
             {"page": int(segment["page"])} if segment["page"] else {}
         )
@@ -48,7 +47,7 @@ def chunk_pages(pages, chunk_size=None, chunk_overlap=None):
 
 
 def chunk_text(text, chunk_size=None, chunk_overlap=None):
-    """Split a single plain text into chunks (page metadata = None)."""
+    """将一段纯文本切分为分块（页码元数据为 None）。"""
     return chunk_pages(
         [{"page": None, "text": text}],
         chunk_size=chunk_size,

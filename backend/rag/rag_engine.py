@@ -1,17 +1,16 @@
-"""LlamaIndex-backed RAG engine.
+"""基于 LlamaIndex 的 RAG 引擎。
 
-Every retrieval path here goes through the LlamaIndex framework:
+此处的所有检索路径均经由 LlamaIndex 框架：
 
-- Embeddings: ``OllamaEmbedding`` against a local Ollama ``bge-m3`` model by
-  default (multilingual, good for Chinese), with a dependency-free
-  ``LexicalEmbedding`` fallback for environments without Ollama / for tests.
-- Indexing: ``VectorStoreIndex`` built from per-knowledge-base chunks, using
-  ``TextNode(id_=<chunk_pk>, text=<chunk_text>)`` nodes.
-- Persistence: each knowledge base's index + a content fingerprint are
-  persisted to ``RAG_INDEX_DIR/<kb_id>/`` so a query does not re-embed the
-  whole corpus on every call; the index is rebuilt only when the chunk set
-  changes.
-- Retrieval: ``index.as_retriever(similarity_top_k=...)``.
+- 嵌入：默认通过本地 Ollama 的 ``bge-m3`` 模型使用 ``OllamaEmbedding``
+  （多语言模型，适合中文场景）；对没有 Ollama 的环境及测试场景，提供
+  无依赖的 ``LexicalEmbedding`` 回退方案。
+- 索引：按知识库用分块构建 ``VectorStoreIndex``，节点形式为
+  ``TextNode(id_=<chunk_pk>, text=<chunk_text>)``。
+- 持久化：各知识库的索引连同内容 fingerprint 一并持久化到
+  ``RAG_INDEX_DIR/<kb_id>/``，避免每次查询都对整个语料重新嵌入；仅在
+  分块集合发生变化时才重建索引。
+- 检索：``index.as_retriever(similarity_top_k=...)``。
 """
 
 import hashlib
@@ -32,9 +31,8 @@ from rag.tokenizer import tokenize
 
 
 class LexicalEmbedding(BaseEmbedding):
-    """Deterministic, dependency-free embedding: bag-of-tokens projected onto
-    a fixed-dimension vector via hashing. Used as the Ollama fallback and in
-    hermetic tests; not the default in production."""
+    """确定性、零依赖的嵌入：通过哈希将词袋映射为固定维度的向量。
+    用作 Ollama 的回退方案并服务于封闭性测试；并非生产默认选项。"""
 
     def __init__(self, dim=1024, **kwargs):
         super().__init__(**kwargs)
@@ -75,7 +73,7 @@ _embed_model_instance = None
 
 
 def get_embed_model():
-    """Return the configured (and memoised) embedding model."""
+    """返回配置的（且已缓存的）嵌入模型实例。"""
     global _embed_model_instance
     if _embed_model_instance is not None:
         return _embed_model_instance
@@ -99,8 +97,8 @@ def _persist_dir(kb_id):
 
 
 def _fingerprint(kb):
-    """Cheap content fingerprint: rebuilding triggers when the chunk set
-    changes (count / max id / newest document edit)."""
+    """廉价的内容 fingerprint：分块集合变化时（count / max id /
+    文档最近编辑时间）触发重建。"""
     if not Chunk.objects.filter(kb=kb).exists():
         return "empty"
     stats = Chunk.objects.filter(kb=kb).aggregate(
@@ -121,8 +119,8 @@ def _fingerprint(kb):
 
 
 def get_index(kb):
-    """Return the (possibly rebuilt) vector index for a knowledge base, or
-    ``None`` when it has no chunks."""
+    """返回知识库的（可能已重建的）向量索引；知识库没有分块时返回
+    ``None``。"""
     if not Chunk.objects.filter(kb=kb).exists():
         return None
 
@@ -137,7 +135,7 @@ def get_index(kb):
                 storage = StorageContext.from_defaults(persist_dir=str(persist_dir))
                 return load_index_from_storage(storage)
         except Exception:
-            # Fall through and rebuild from a corrupt/partial store.
+            # 存储损坏或不完整时落入下方，重新构建索引。
             pass
 
     nodes = [
@@ -156,10 +154,10 @@ def get_index(kb):
 
 
 def retrieve(kb, query, top_k=None):
-    """Return the top-k chunks of ``kb`` matching ``query`` via LlamaIndex.
+    """经 LlamaIndex 返回 ``kb`` 中与 ``query`` 匹配的 top-k 个分块。
 
-    Each result: ``{score, chunk_id, document_id, document_title,
-    chunk_index, page, text}``, ordered by relevance (descending).
+    每条结果为：``{score, chunk_id, document_id, document_title,
+    chunk_index, page, text}``，按相关度降序排列。
     """
     if not query or not query.strip():
         return []
@@ -198,8 +196,8 @@ def retrieve(kb, query, top_k=None):
 
 
 def invalidate_kb_index(kb):
-    """Drop a persisted index so the next query rebuilds it (used after
-    document deletion / re-ingestion)."""
+    """删除已持久化的索引，使下一次查询时重建（用于文档
+    删除或重新导入之后）。"""
     persist_dir = _persist_dir(kb.id)
     if persist_dir.exists():
         shutil.rmtree(persist_dir, ignore_errors=True)

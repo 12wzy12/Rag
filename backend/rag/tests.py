@@ -1,13 +1,11 @@
-"""Tests for the RAG pipeline.
+"""RAG 流水线的测试。
 
-Retrieval/ingestion tests run on the dependency-free combination of the
-``memory`` vector backend + ``lexical`` embedding, so the suite is hermetic
-(no Ollama / Milvus / network required) while exercising the real pipeline:
-parsing -> chunking -> Chunk rows -> retrieval envelope -> rerank -> gate.
+检索/入库测试运行在零依赖组合上：``memory`` 向量后端 + ``lexical`` 嵌入，
+因此整个测试套件是封闭的（无需 Ollama / Milvus / 网络），同时覆盖真实
+流水线：解析 -> 切分 -> Chunk 记录 -> 检索结果 -> 重排 -> 门控。
 
-Parser tests for PDF/DOCX and the Milvus smoke test need their optional
-dependencies (PyMuPDF / python-docx / milvus-lite) and are skipped when those
-are not importable.
+PDF/DOCX 解析测试与 Milvus 冒烟测试需要其可选依赖（PyMuPDF /
+python-docx / milvus-lite），依赖不可导入时自动跳过。
 """
 
 import io
@@ -31,7 +29,7 @@ TEST_SETTINGS = {
     "RAG_VECTOR_BACKEND": "memory",
     "RAG_CHUNK_SIZE": 200,
     "RAG_CHUNK_OVERLAP": 40,
-    "RAG_SIMILARITY_THRESHOLD": 0.0,  # lexical scores are low; default gate off
+    "RAG_SIMILARITY_THRESHOLD": 0.0,  # lexical 得分整体偏低，默认关闭门控
 }
 
 TEST_DIR = TEST_SETTINGS["RAG_INDEX_DIR"]
@@ -136,15 +134,15 @@ class ChunkingTests(TestCase):
         )
         self.assertGreater(len(chunks), 0)
         self.assertTrue(all(c["page"] == 1 for c in chunks))
-        # Overlapping window must not invent content.
+        # 重叠窗口不应凭空生成内容。
         joined = "".join(c["text"] for c in chunks)
         self.assertIn("第一页", joined)
 
 
 class RerankerTests(TestCase):
     def test_lexical_boost_reorders_candidates(self):
-        # A (pure vector winner, no lexical overlap) vs B (moderate vector,
-        # strong lexical overlap). With alpha=0.4 B must win.
+        # A（纯向量得分最高但无词法重合）对 B（向量中等但词法重合度高）。
+        # alpha=0.4 时 B 应胜出。
         candidates = [
             {"chunk_id": 1, "score": 0.9, "text": "股票价格走势与宏观经济数据分析报告。"},
             {"chunk_id": 2, "score": 0.7, "text": "机器学习在医疗影像诊断中的应用研究进展。"},
@@ -166,7 +164,7 @@ class RerankerTests(TestCase):
 @override_settings(**TEST_SETTINGS)
 class RagEngineTests(TestCase):
     def setUp(self):
-        rag_engine._embed_model_instance = None  # pick up lexical embedding
+        rag_engine._embed_model_instance = None  # 使引擎重新加载 lexical 嵌入
         self.addCleanup(shutil.rmtree, TEST_DIR, ignore_errors=True)
 
     def _make_kb(self, docs):
@@ -204,7 +202,7 @@ class RagEngineTests(TestCase):
         self.assertIn("rerank_score", first)
         self.assertIn("page", first)
         self.assertIn("document_title", first)
-        # The targeted chunk must outrank the general platform chunk.
+        # 目标片段必须排在通用平台片段之前。
         self.assertEqual(first["document_title"], "d0")
 
     def test_retrieval_empty_kb_refused(self):
@@ -424,8 +422,8 @@ class ChatSseTests(TestCase):
 )
 @override_settings(**TEST_SETTINGS)
 class MilvusSmokeTests(TestCase):
-    """Real Milvus Lite round trip: create collection -> insert -> search ->
-    filter delete -> drop. Skipped automatically when milvus-lite is absent."""
+    """Milvus Lite 真实往返测试：创建 collection -> 插入 -> 搜索 ->
+    条件删除 -> 删除。缺少 milvus-lite 时自动跳过。"""
 
     def test_roundtrip(self):
         tmp = tempfile.mkdtemp(prefix="rag_milvus_")
@@ -433,7 +431,7 @@ class MilvusSmokeTests(TestCase):
         backend = vector_store.MilvusBackend(uri=str(tmp) + "/smoke.db")
         try:
             backend.ping()
-        except RuntimeError as exc:  # pragma: no cover - environment specific
+        except RuntimeError as exc:  # pragma: no cover - 与环境相关
             self.skipTest(f"milvus-lite cannot start: {exc}")
 
         from rag.rag_engine import LexicalEmbedding

@@ -1,18 +1,18 @@
-"""Answer generation on top of retrieved chunks.
+"""基于检索片段生成回答。
 
-Two providers are supported:
+支持两种模型服务提供方：
 
-- ``ollama`` (default): generate locally via a running Ollama server
-  (e.g. ``qwen3:8b``). No network or API key required.
-- ``openai``: an OpenAI-compatible ``/chat/completions`` endpoint
-  (e.g. DeepSeek) configured through settings.
+- ``ollama``（默认）：通过本机运行的 Ollama 服务在本地生成
+  （如 ``qwen3:8b``），无需网络或 API 密钥。
+- ``openai``：OpenAI 兼容的 ``/chat/completions`` 接口
+  （如 DeepSeek），通过 settings 进行配置。
 
-Both providers support streaming (``generate_answer_stream``), which powers
-the SSE chat endpoint; ``generate_answer`` is the non-streaming form used by
-the legacy ``/answer`` endpoint.
+两个提供方都支持流式输出（``generate_answer_stream``），SSE 聊天接口
+即基于此实现；``generate_answer`` 是非流式版本，供旧的 ``/answer``
+接口使用。
 
-The retrieval endpoint (``/search``) does not depend on this module; these
-helpers only power the optional ``/answer`` and ``/chat`` endpoints.
+检索接口（``/search``）不依赖本模块；这些辅助函数只服务于可选的
+``/answer`` 与 ``/chat`` 接口。
 """
 
 import json
@@ -23,10 +23,10 @@ from django.conf import settings
 
 
 def is_configured():
-    """Whether the configured LLM provider is available."""
+    """判断配置的 LLM 提供方当前是否可用。"""
     if settings.RAG_LLM_PROVIDER == "openai":
         return bool(settings.RAG_LLM_BASE_URL and settings.RAG_LLM_API_KEY)
-    # ollama provider is considered available; failures surface at call time.
+    # ollama 提供方视为始终可用；实际失败会在调用时暴露。
     return True
 
 
@@ -38,7 +38,7 @@ def _format_chunks(chunks):
 
 
 def _build_prompt(query, chunks):
-    """Single user message with retrieved context (no conversation history)."""
+    """仅包含检索上下文（无对话历史）的单条用户消息。"""
     return (
         "你是知识库问答助手。请仅依据以下检索到的文档片段回答用户问题。"
         "若片段无法回答问题，请明确说明'根据现有知识库无法回答'。"
@@ -50,11 +50,11 @@ def _build_prompt(query, chunks):
 
 
 def _build_chat_messages(query, chunks, history=None):
-    """Messages for chat endpoints: system instruction + recent history
-    (if any) + the current question carrying the retrieved context.
+    """聊天接口的消息列表：系统指令 + 最近对话历史（如有）
+    + 携带检索上下文的当前问题。
 
-    ``history``: list of ``{"role": "user"|"assistant", "content": str}``
-    from the conversation's previous turns.
+    ``history``：来自对话前几轮的 ``{"role": "user"|"assistant", "content": str}``
+    消息列表。
     """
     context = _format_chunks(chunks)
     turns = settings.RAG_CHAT_HISTORY_TURNS
@@ -156,11 +156,10 @@ def _stream_openai(query, chunks, history):
 
 
 def generate_answer_stream(query, chunks, history=None):
-    """Stream answer pieces for ``query`` grounded in ``chunks``.
+    """以 ``chunks`` 为依据为 ``query`` 流式生成回答片段。
 
-    Yields answer text fragments as they arrive. Raises ``RuntimeError``
-    with a readable message when the model call fails, and when the model
-    produced no content at all.
+    随生成进度逐段产出回答文本。模型调用失败或模型完全未产出内容时，
+    抛出携带可读信息的 ``RuntimeError``。
     """
     if not query or not chunks:
         raise RuntimeError("缺少查询或检索上下文")
@@ -176,7 +175,7 @@ def generate_answer_stream(query, chunks, history=None):
             yield piece
     except RuntimeError:
         raise
-    except Exception as exc:  # transport/parsing hiccups from the client libs
+    except Exception as exc:  # 客户端库的网络传输/解析等临时性错误
         raise RuntimeError(f"模型调用失败: {exc}") from exc
 
     if not "".join(total).strip():
@@ -184,10 +183,10 @@ def generate_answer_stream(query, chunks, history=None):
 
 
 def generate_answer(query, chunks, history=None, timeout=300):
-    """Non-streaming answer: join :func:`generate_answer_stream` output.
+    """非流式回答：拼接 :func:`generate_answer_stream` 的输出。
 
-    Returns ``(answer_text, sources_count)``; raises ``RuntimeError`` with a
-    readable message on model-call failure.
+    返回 ``(answer_text, sources_count)``；模型调用失败时抛出携带
+    可读信息的 ``RuntimeError``。
     """
     pieces = list(generate_answer_stream(query, chunks, history))
     return "".join(pieces), len(chunks)
